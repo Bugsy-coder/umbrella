@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Walk & Weather Buddy</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: #1a1a1a; color: #fff;
+            display: flex; flex-direction: column; align-items: center;
+            min-height: 100vh; margin: 0; padding: 20px; text-align: center;
+            transition: background-color 1s; overflow-x: hidden;
+        }
+        #main-card { margin-top: 20px; z-index: 10; background: rgba(0,0,0,0.3); padding: 25px; border-radius: 20px; backdrop-filter: blur(10px); width: 90%; max-width: 400px; }
+        #answer { font-size: 5rem; font-weight: bold; margin: 10px 0; }
+        #details { font-size: 1rem; opacity: 0.9; margin-bottom: 10px; }
+        
+        .stop-item { 
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 15px; margin: 8px 0; background: rgba(255,255,255,0.1); 
+            border-radius: 12px; cursor: pointer; transition: 0.2s; border: 1px solid transparent;
+        }
+        .stop-item:hover { background: rgba(255,255,255,0.2); border-color: #fff; }
+        .stop-info { display: flex; align-items: center; text-align: left; }
+        .stop-icon { font-size: 1.4rem; margin-right: 12px; }
+        .walk-dist { font-size: 0.8rem; opacity: 0.6; }
+
+        #weather-effects { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
+        .drop { position: absolute; background: rgba(255,255,255,0.4); width: 2px; height: 20px; animation: fall linear infinite; }
+        @keyframes fall { to { transform: translateY(110vh); } }
+        .sun { position: absolute; top: -30px; right: -30px; width: 180px; height: 180px; background: #FFD700; border-radius: 50%; box-shadow: 0 0 60px #FF8C00; }
+    </style>
+</head>
+<body>
+    <div id="weather-effects"></div> 
+
+    <div id="main-card">
+        <h1 id="title">Select a Stop</h1>
+        <p id="answer">👟</p>
+        <p id="details">Finding nearby transport...</p>
+        <div id="stops-list"></div>
+        <button id="reset-btn" style="display:none; margin-top:15px; padding:10px; border-radius:8px; border:none; cursor:pointer;" onclick="location.reload()">Change Stop</button>
+    </div>
+
+    <script>
+        let userLat, userLon;
+        const list = document.getElementById('stops-list');
+
+        // Haversine formula to calculate distance in km
+        function getDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371;
+            const dLat = (lat2-lat1) * Math.PI / 180;
+            const dLon = (lon2-lon1) * Math.PI / 180;
+            const a = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLon/2) * Math.sin(dLon/2);
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        }
+
+        async function selectStop(name, stopLat, stopLon) {
+            const dist = getDistance(userLat, userLon, stopLat, stopLon);
+            const walkTime = Math.round((dist / 5) * 60); // 5km/h avg walking speed
+            
+            document.getElementById('title').innerText = `Walking to ${name}`;
+            list.innerHTML = "";
+            document.getElementById('reset-btn').style.display = "inline-block";
+            
+            // Check weather for the next hour specifically
+            const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${userLat}&longitude=${userLon}&hourly=precipitation_probability&forecast_hours=1&timezone=auto`;
+            const res = await fetch(weatherUrl);
+            const data = await res.json();
+            const rainProb = data.hourly.precipitation_probability[0];
+
+            if (rainProb >= 20) {
+                document.getElementById('answer').innerText = "YES ☔";
+                document.body.style.backgroundColor = "#2c3e50";
+                startRain();
+            } else {
+                document.getElementById('answer').innerText = "NO 🕶️";
+                document.body.style.backgroundColor = "#87CEEB";
+                document.body.style.color = "#111";
+            }
+            document.getElementById('details').innerText = `${walkTime} min walk (${(dist*1000).toFixed(0)}m). Rain chance: ${rainProb}%`;
+        }
+
+        async function getStops(lat, lon) {
+            userLat = lat; userLon = lon;
+            const query = `[out:json];node(around:1000)["public_transport"~"platform|station"];out;`;
+            const url = "https://overpass-api.de/api/interpreter?data=" + encodeURIComponent(query);
+            
+            const response = await fetch(url);
+            const data = await response.json();
+            
+            if (data.elements.length === 0) {
+                document.getElementById('details').innerText = "No stops found within 1km.";
+                return;
+            }
+
+            list.innerHTML = data.elements
+                .filter(s => s.tags.name)
+                .slice(0, 5)
+                .map(s => {
+                    const d = getDistance(userLat, userLon, s.lat, s.lon);
+                    return `
+                    <div class="stop-item" onclick="selectStop('${s.tags.name}', ${s.lat}, ${s.lon})">
+                        <div class="stop-info">
+                            <span class="stop-icon">🚏</span>
+                            <div>
+                                <div class="stop-name">${s.tags.name}</div>
+                                <div class="walk-dist">${(d*1000).toFixed(0)}m away</div>
+                            </div>
+                        </div>
+                        <span>➔</span>
+                    </div>`;
+                }).join('');
+            document.getElementById('details').innerText = "Select your destination:";
+        }
+
+        function startRain() {
+            for (let i = 0; i < 50; i++) {
+                let d = document.createElement('div');
+                d.className = 'drop';
+                d.style.left = Math.random() * 100 + 'vw';
+                d.style.animationDuration = (Math.random() * 0.5 + 0.5) + 's';
+                document.getElementById('weather-effects').appendChild(d);
+            }
+        }
+
+        navigator.geolocation.getCurrentPosition(
+            (p) => getStops(p.coords.latitude, p.coords.longitude),
+            () => fetch('https://ipapi.co/json/').then(r => r.json()).then(d => getStops(d.latitude, d.longitude))
+        );
+    </script>
+</body>
+</html>
